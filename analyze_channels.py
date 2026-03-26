@@ -26,12 +26,7 @@ REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 ARTIFACTS_DIR = os.path.join(BASE_DIR, "artifacts")
 
 MANUAL_CHANNEL_FILES = [
-    ("legacy/result.json", "Android Broadcast", "Кирилл Розов"),
-    ("ChatExport_2026-03-25/result.json", "Грокаем C++", None),
-    ("ChatExport_2026-03-25 (1)/result.json", "Аня Подображных [Будни продакта]", "Аня Подображных"),
-    ("ChatExport_2026-03-25 (2)/result.json", "Kotlin Developer", None),
-    ("ChatExport_2026-03-25 (3)/result.json", "Mobile Developer", "Алексей Гладков / Pavel Kachan"),
-    ("ChatExport_2026-03-25 (4)/result.json", "Android Good Reads", None),
+    # ("path/to/export.json", "Channel Name", "Author Name or None"),
 ]
 
 

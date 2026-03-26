@@ -5,7 +5,7 @@
 
 Использование:
   pip install telethon
-  python3 scrape.py --channels mobiledevnews android_broadcast --since 2025-10-01
+  python3 scrape.py --channels channel1 channel2 --since 2025-10-01
 
 При первом запуске — авторизация через номер телефона + код из Telegram.
 Сессия сохраняется в файл .session (повторный вход не нужен).
@@ -342,7 +342,7 @@ def main():
     )
     parser.add_argument(
         "--channels", nargs="+", required=True,
-        help="Юзернеймы каналов (без @), например: mobiledevnews android_broadcast"
+        help="Юзернеймы каналов (без @), например: channel1 channel2"
     )
     parser.add_argument(
         "--since", required=True,
