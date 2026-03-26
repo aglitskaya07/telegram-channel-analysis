@@ -18,9 +18,9 @@ pip install -r requirements.txt
 
 Примеры запросов агенту:
 
-> Скачай посты из канала android_broadcast с октября 2025
+> Скачай посты из канала my_channel с октября 2025
 
-> Скачай посты из каналов mobiledevnews, ios_broadcast, kotlin_adept с 1 октября 2025
+> Скачай посты из каналов channel_1, channel_2, channel_3 с 1 октября 2025
 
 Агент сам запустит скрипт `scrape.py`, посты сохранятся в папку `exports/`.
 
