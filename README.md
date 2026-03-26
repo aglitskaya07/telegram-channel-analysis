@@ -67,7 +67,6 @@ pip install -r requirements.txt
 | `analyze_channels.py` | Анализирует посты и строит отчёты в `reports/` |
 | `content_enrich.py` | Подтягивает текст из YouTube-роликов, если в посте есть ссылка (запускается автоматически) |
 | `merge_sentiment_batches.py` | Склеивает батчи разметки тональности в один файл |
-| `llm_sentiment_label.py` | Альтернативная разметка тональности через OpenAI API (опционально) |
 
 ## Структура папок
 
