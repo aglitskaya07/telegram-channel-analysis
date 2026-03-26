@@ -1,0 +1,24 @@
+# IDE
+.vscode/
+.cursor/
+
+# Python
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Telegram / секреты
+tg_session.session
+*.session
+.tg_credentials.json
+
+# Сгенерированные данные
+exports/
+artifacts/
+reports/
+sentiment_overrides.json
