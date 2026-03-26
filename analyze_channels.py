@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-Анализ ТГ-каналов: упоминания Яндекса и конкурентов (VK, Сбер, Ozon) по авторам.
+Анализ ТГ-каналов: упоминания основного бренда и конкурентов по авторам.
 Генерирует reports/report.md и отдельные срезы reports/by_author/*.md
-(по каждому автору: Яндекс и конкуренты — темы, тональность, долгосрочная линия).
+(по каждому автору: основной бренд и конкуренты — темы, тональность, долгосрочная линия).
+
+Бренды и паттерны поиска задаются в brands_config.py (см. brands_config.example.py).
 
 Режимы:
   python3 analyze_channels.py                  — генерирует reports/report.md и отчёты по авторам
   python3 analyze_channels.py --dump-posts     — выгружает посты в reports/posts_dump.txt
-  python3 analyze_channels.py --dump-yandex    — только Яндекс, по файлу на автора в reports/yandex_by_author/
+  python3 analyze_channels.py --dump-brand     — только основной бренд, по файлу на автора
 
-Тональность к брендам: см. .cursor/rules — разметка агентом Cursor по artifacts/llm_sentiment_queue.jsonl → sentiment_overrides.json
+Тональность к брендам: разметка агентом Cursor по artifacts/llm_sentiment_queue.jsonl → sentiment_overrides.json
 """
 
 import argparse
@@ -19,6 +21,11 @@ import os
 from collections import defaultdict, Counter
 
 from content_enrich import enrich_text_for_llm
+from brands_config import (
+    PRIMARY_BRAND_NAME, PRIMARY_BRAND_NAME_GENITIVE, PRIMARY_BRAND_URL_PATTERN,
+    PRIMARY_BRAND_PATTERNS, COMPETITOR_PATTERNS,
+    HOSTING_BRAND, HOSTING_VIDEO_PATTERN, HOSTING_EDITORIAL_PATTERN, HOSTING_ALSO_ON_PATTERN,
+)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPORTS_DIR = os.path.join(BASE_DIR, "exports")
@@ -93,41 +100,7 @@ def get_channel_files():
 
     return auto + manual_only
 
-YANDEX_PATTERNS = {
-    # Match Russian/English forms, including simple inflections: Яндекс, Яндекса, Yandex's, etc.
-    "Яндекс (общее)": r'\bяндекс[а-яa-z-]*\b(?!\s*cup)',
-    "Yandex (общее)": r"\byandex[a-z'-]*\b(?!\s*cup)",
-    "YandexCup": r'yandex\s*cup',
-    "AppMetrica": r'appmetrica[a-z]*',
-    "Яндекс 360": r'яндекс[а-яa-z-]*\s*360',
-    "Яндекс Диск": r'яндекс[а-яa-z-]*[\.\s]*диск[а-яa-z-]*',
-    "Яндекс Музыка": r'яндекс[а-яa-z-]*[\.\s]*музык[а-яa-z-]*',
-    "Яндекс Го": r'яндекс[а-яa-z-]*\s*го\b',
-    "Яндекс Маркет": r'яндекс[а-яa-z-]*\s*маркет[а-яa-z-]*(?!инг|плейс)',
-    "Яндекс Вертикали": r'яндекс[а-яa-z-]*\s*вертикал[а-яa-z-]*',
-    "Авто.ру": r'авто\.ру',
-    "Яндекс Недвижимость": r'яндекс[а-яa-z-]*\s*недвижимост[а-яa-z-]*',
-    "Я.Субботник": r'я[\.\s]*субботник',
-    "Яндекс ПРО": r'яндекс[а-яa-z-]*\s*про\b',
-    "Яндекс Браузер": r'яндекс[а-яa-z-]*[\.\s]*браузер[а-яa-z-]*',
-}
-
-COMPETITOR_PATTERNS = {
-    "VK": {
-        "VK (платформа)": r'(?<![a-zA-Z/\.])vk[a-z-]*\b(?!\s*video|video)',
-        "ВКонтакте": r'вконтакт[а-яa-z-]*',
-        "VK Video": r'vk\s*video|vkvideo',
-    },
-    "Сбер": {
-        "Сбер": r'\bсбер[а-яa-z-]*(?!маркет|мегамаркет)\b',
-        "Sber": r'\bsber[a-z-]*\b',
-        "GigaChat": r'gigachat[a-z-]*|гигачат[а-яa-z-]*',
-    },
-    "Ozon": {
-        "Ozon": r'\bozon[a-z-]*\b',
-        "Озон": r'\bозон[а-яa-z-]*\b',
-    },
-}
+COMPETITOR_NAMES = list(COMPETITOR_PATTERNS.keys())
 
 POSITIVE_SIGNALS = [
     r'круто', r'отлично', r'удобн', r'рекоменду', r'лучш[иеая]',
@@ -264,13 +237,15 @@ def load_channel(filepath):
         return json.load(f)
 
 
-def is_vk_only_hosting(text, urls):
-    """Check if VK mention is only about VK Video as a hosting platform."""
+def is_hosting_only(text, urls):
+    """Check if a competitor mention is only about video hosting (not editorial)."""
+    if not HOSTING_BRAND or not HOSTING_VIDEO_PATTERN:
+        return False
     text_lower = text.lower()
-    has_youtube = bool(re.search(r'youtube|youtu\.be', text_lower))
-    vk_video_only = bool(re.search(r'vk\s*video|vkvideo|vk видео', text_lower))
-    has_vk_editorial = bool(re.search(r'вконтакте|(?<![/\.a-z])vk(?!\s*video|video|\.|/)', text_lower))
-    if has_youtube and vk_video_only and not has_vk_editorial:
+    has_alt_platform = bool(re.search(HOSTING_ALSO_ON_PATTERN, text_lower)) if HOSTING_ALSO_ON_PATTERN else False
+    video_only = bool(re.search(HOSTING_VIDEO_PATTERN, text_lower))
+    has_editorial = bool(re.search(HOSTING_EDITORIAL_PATTERN, text_lower)) if HOSTING_EDITORIAL_PATTERN else False
+    if has_alt_platform and video_only and not has_editorial:
         return True
     return False
 
@@ -300,7 +275,7 @@ def dump_posts(all_authors):
             lines.append(f"  key:      {p['post_key']}")
             lines.append(f"  author:   {author_key}")
             lines.append(f"  date:     {p['date']}")
-            lines.append(f"  brand:    Яндекс")
+            lines.append(f"  brand:    {PRIMARY_BRAND_NAME}")
             lines.append(f"  products: {', '.join(p['products'])}")
             lines.append(f"  context:  {p['context']}")
             lines.append(f"  current_sentiment: {p['sentiment']}")
@@ -308,9 +283,9 @@ def dump_posts(all_authors):
             lines.append(p["full_text"][:1500])
             lines.append("")
 
-        for comp_name in ["VK", "Сбер", "Ozon"]:
+        for comp_name in COMPETITOR_NAMES:
             for p in info["competitor_posts"].get(comp_name, []):
-                if p.get("vk_hosting"):
+                if p.get("hosting_only"):
                     continue
                 idx += 1
                 lines.append(f"={'='*80}")
@@ -340,9 +315,9 @@ def safe_report_filename(author_key: str) -> str:
     return s[:180] if len(s) > 180 else s
 
 
-def dump_yandex_by_author(all_authors):
-    """Отдельный файл на каждого автора/канал только с постами про Яндекс (полный текст)."""
-    out_dir = os.path.join(REPORTS_DIR, "yandex_by_author")
+def dump_brand_by_author(all_authors):
+    """Отдельный файл на каждого автора/канал только с постами про основной бренд (полный текст)."""
+    out_dir = os.path.join(REPORTS_DIR, "brand_by_author")
     os.makedirs(out_dir, exist_ok=True)
     n_files = 0
     n_posts = 0
@@ -353,7 +328,7 @@ def dump_yandex_by_author(all_authors):
         fn = safe_report_filename(author_key) + ".txt"
         path = os.path.join(out_dir, fn)
         lines = [
-            f"# Посты с упоминанием Яндекса",
+            f"# Посты с упоминанием {PRIMARY_BRAND_NAME_GENITIVE}",
             f"# Автор / ключ: {author_key}",
             f"# Канал: {info['channel']}",
             f"# Всего постов в выборке: {len(posts)}",
@@ -373,7 +348,7 @@ def dump_yandex_by_author(all_authors):
             f.write("\n".join(lines))
         n_files += 1
         print(f"  {path}")
-    print(f"Выгрузка про Яндекс: {n_files} файл(ов), {n_posts} пост(ов) в {out_dir}")
+    print(f"Выгрузка про {PRIMARY_BRAND_NAME}: {n_files} файл(ов), {n_posts} пост(ов) в {out_dir}")
     return n_files
 
 
@@ -426,14 +401,14 @@ def analyze(allow_keyword_fallback=False):
             month = get_month(date_str)
             info["months"].add(month)
 
-            yandex_hits = find_mentions(text_lower, YANDEX_PATTERNS)
+            yandex_hits = find_mentions(text_lower, PRIMARY_BRAND_PATTERNS)
 
             yandex_url_only = False
             if not yandex_hits:
                 url_text = " ".join(urls).lower()
-                if re.search(r'yandex|яндекс', url_text):
+                if re.search(PRIMARY_BRAND_URL_PATTERN, url_text):
                     yandex_url_only = True
-                    yandex_hits = [("Yandex (URL)", "yandex", 0)]
+                    yandex_hits = [(f"{PRIMARY_BRAND_NAME} (URL)", "url", 0)]
 
             if yandex_hits:
                 ctx = classify_context(text, urls)
@@ -454,7 +429,7 @@ def analyze(allow_keyword_fallback=False):
                     sent_reason = override.get("reason", "")
                 else:
                     if allow_keyword_fallback:
-                        pos, neg = score_sentiment_for_brand(text, YANDEX_PATTERNS)
+                        pos, neg = score_sentiment_for_brand(text, PRIMARY_BRAND_PATTERNS)
                         sent = sentiment_label(pos, neg)
                         sent_reason = "keyword fallback (нет LLM-оценки)"
                     else:
@@ -465,7 +440,7 @@ def analyze(allow_keyword_fallback=False):
                         "channel": channel_name,
                         "msg_id": msg.get("id", ""),
                         "date": date_str,
-                        "brand": "Яндекс",
+                        "brand": PRIMARY_BRAND_NAME,
                         "products": products,
                         "context": ctx,
                         "text": enriched["text"],
@@ -497,10 +472,10 @@ def analyze(allow_keyword_fallback=False):
                 if not comp_hits:
                     continue
 
-                if comp_name == "VK":
-                    vk_hosting = is_vk_only_hosting(text, urls)
+                if comp_name == HOSTING_BRAND:
+                    hosting_only = is_hosting_only(text, urls)
                 else:
-                    vk_hosting = False
+                    hosting_only = False
 
                 ctx = classify_context(text, urls)
                 sub_products = list(set(label for label, _, _ in comp_hits))
@@ -548,7 +523,7 @@ def analyze(allow_keyword_fallback=False):
                     "sentiment": sent,
                     "sentiment_reason": sent_reason,
                     "text_preview": text[:400].replace("\n", " ").strip(),
-                    "vk_hosting": vk_hosting,
+                    "hosting_only": hosting_only,
                     "post_key": post_key,
                     "msg_id": msg.get("id", ""),
                     "full_text": text,
@@ -565,9 +540,9 @@ def trajectory_label(posts, brand=""):
     if not posts:
         return "не упоминает"
 
-    hosting_count = sum(1 for p in posts if p.get("vk_hosting"))
+    hosting_count = sum(1 for p in posts if p.get("hosting_only"))
     if hosting_count == len(posts):
-        return "использует VK Video как хостинг (не редакционный)"
+        return "использует только как хостинг (не редакционный)"
 
     n = len(posts)
     if n <= 2:
@@ -672,7 +647,7 @@ def narrative_brand_slice(posts, brand_phrase, trajectory, get_products):
 
 
 def generate_author_slice_md(author_key, info, period_str):
-    """Один файл: отдельный срез по Яндексу и по каждому конкуренту."""
+    """Один файл: отдельный срез по основному бренду и по каждому конкуренту."""
     lines = [
         f"# Срез: {author_key}",
         "",
@@ -686,13 +661,13 @@ def generate_author_slice_md(author_key, info, period_str):
         "",
         "---",
         "",
-        "## Яндекс",
+        f"## {PRIMARY_BRAND_NAME}",
         "",
     ])
 
     yp = info["yandex_posts"]
-    y_traj = trajectory_label(yp, "Яндекс")
-    lines.append(narrative_brand_slice(yp, "Яндекса", y_traj, _products_from_yandex_post))
+    y_traj = trajectory_label(yp, PRIMARY_BRAND_NAME)
+    lines.append(narrative_brand_slice(yp, PRIMARY_BRAND_NAME_GENITIVE, y_traj, _products_from_yandex_post))
     lines.append("")
 
     if yp:
@@ -714,11 +689,11 @@ def generate_author_slice_md(author_key, info, period_str):
     lines.extend([
         "---",
         "",
-        "## Конкуренты (VK, Сбер, Ozon)",
+        "## Конкуренты",
         "",
     ])
 
-    for comp_name in ["VK", "Сбер", "Ozon"]:
+    for comp_name in COMPETITOR_NAMES:
         cp = info["competitor_posts"].get(comp_name, [])
         traj = trajectory_label(cp, comp_name)
         lines.append(f"### {comp_name}")
@@ -732,12 +707,12 @@ def generate_author_slice_md(author_key, info, period_str):
         if not cp:
             continue
         hosting_note = ""
-        if comp_name == "VK":
-            hv = sum(1 for p in cp if p.get("vk_hosting"))
+        if comp_name == HOSTING_BRAND:
+            hv = sum(1 for p in cp if p.get("hosting_only"))
             if hv:
-                hosting_note = f"\n\n*{hv} пост(ов) — кросс-постинг на VK Video (хостинг), показаны только содержательные.*"
+                hosting_note = f"\n\n*{hv} пост(ов) — кросс-постинг (хостинг), показаны только содержательные.*"
 
-        non_hosting = [p for p in cp if not p.get("vk_hosting")]
+        non_hosting = [p for p in cp if not p.get("hosting_only")]
         show_posts = non_hosting if non_hosting else cp
 
         lines.append(f"**Все публикации** ({len(show_posts)} содержательных из {len(cp)}){hosting_note}")
@@ -746,7 +721,7 @@ def generate_author_slice_md(author_key, info, period_str):
             d = (p.get("date") or "")[:10]
             sub = ", ".join(p.get("sub_products") or [])
             reason = f" — {p['sentiment_reason']}" if p.get("sentiment_reason") else ""
-            hosting_tag = " [VK Video хостинг]" if p.get("vk_hosting") else ""
+            hosting_tag = " [хостинг]" if p.get("hosting_only") else ""
             lines.append(
                 f"**{i}.** [{d}] **{p['sentiment']}**{reason} · {p['context']}{hosting_tag} · {sub}"
             )
@@ -807,10 +782,10 @@ def generate_report(all_authors):
     period = format_period_line(all_authors)
 
     lines = []
-    lines.append("# Анализ авторов ТГ-каналов: Яндекс и конкуренты\n")
+    lines.append(f"# Анализ авторов ТГ-каналов: {PRIMARY_BRAND_NAME} и конкуренты\n")
     lines.append(f"**Период:** {period}  ")
     lines.append(f"**Каналов:** {len(all_authors)}  ")
-    lines.append("**Конкуренты в фокусе:** VK/ВКонтакте, Сбер/GigaChat, Ozon\n")
+    lines.append(f"**Конкуренты в фокусе:** {', '.join(COMPETITOR_NAMES)}\n")
     lines.append("---\n")
 
     sorted_authors = sorted(all_authors.items(),
@@ -828,10 +803,10 @@ def generate_report(all_authors):
 
         # --- ЯНДЕКС ---
         yp = info["yandex_posts"]
-        lines.append(f"### Яндекс ({len(yp)} пост(ов) с упоминаниями)\n")
+        lines.append(f"### {PRIMARY_BRAND_NAME} ({len(yp)} пост(ов) с упоминаниями)\n")
 
         if not yp:
-            lines.append("Упоминания Яндекса и его продуктов в постах за период **не обнаружены**.\n")
+            lines.append(f"Упоминания {PRIMARY_BRAND_NAME_GENITIVE} и продуктов в постах за период **не обнаружены**.\n")
         else:
             all_products = defaultdict(int)
             contexts = defaultdict(int)
@@ -866,10 +841,10 @@ def generate_report(all_authors):
                 lines.append(f"- {m}: {len(posts_m)} пост(ов) — {', '.join(sents)}")
             lines.append("")
 
-            traj = trajectory_label(yp, "Яндекс")
-            lines.append(f"**Долгосрочная линия (Яндекс):** {traj}\n")
+            traj = trajectory_label(yp, PRIMARY_BRAND_NAME)
+            lines.append(f"**Долгосрочная линия ({PRIMARY_BRAND_NAME}):** {traj}\n")
 
-            lines.append("<details><summary>Примеры постов с упоминанием Яндекса</summary>\n")
+            lines.append(f"<details><summary>Примеры постов с упоминанием {PRIMARY_BRAND_NAME_GENITIVE}</summary>\n")
             for p in yp[:8]:
                 preview = p["text_preview"][:300]
                 reason = f" — {p['sentiment_reason']}" if p.get("sentiment_reason") else ""
@@ -882,21 +857,21 @@ def generate_report(all_authors):
         lines.append(f"### Конкуренты\n")
 
         if not has_competitors:
-            lines.append("Упоминания VK, Сбера или Ozon **не обнаружены**.\n")
+            lines.append("Упоминания конкурентов **не обнаружены**.\n")
         else:
-            for comp_name in ["VK", "Сбер", "Ozon"]:
+            for comp_name in COMPETITOR_NAMES:
                 cp = info["competitor_posts"].get(comp_name, [])
                 if not cp:
                     lines.append(f"**{comp_name}:** не упоминается\n")
                     continue
 
-                hosting_count = sum(1 for p in cp if p.get("vk_hosting")) if comp_name == "VK" else 0
+                hosting_count = sum(1 for p in cp if p.get("hosting_only")) if comp_name == HOSTING_BRAND else 0
                 editorial_count = len(cp) - hosting_count
 
                 lines.append(f"**{comp_name}** ({len(cp)} пост(ов)):\n")
 
-                if comp_name == "VK" and hosting_count > 0:
-                    lines.append(f"  > Из {len(cp)} постов **{hosting_count}** — кросс-постинг видео на VK Video (хостинг-платформа), **{editorial_count}** — содержательные упоминания.\n")
+                if comp_name == HOSTING_BRAND and hosting_count > 0:
+                    lines.append(f"  > Из {len(cp)} постов **{hosting_count}** — кросс-постинг (хостинг-платформа), **{editorial_count}** — содержательные упоминания.\n")
 
                 sub_prods = defaultdict(int)
                 contexts_c = defaultdict(int)
@@ -919,13 +894,13 @@ def generate_report(all_authors):
                 lines.append(f"- **Долгосрочная линия ({comp_name}):** {traj_c}")
                 lines.append("")
 
-                non_hosting = [p for p in cp if not p.get("vk_hosting")]
+                non_hosting = [p for p in cp if not p.get("hosting_only")]
                 examples = non_hosting[:3] if non_hosting else cp[:3]
                 if examples:
                     lines.append("<details><summary>Примеры постов</summary>\n")
                     for p in examples:
                         preview = p["text_preview"][:300]
-                        hosting_note = " [VK Video хостинг]" if p.get("vk_hosting") else ""
+                        hosting_note = " [хостинг]" if p.get("hosting_only") else ""
                         reason = f" — {p['sentiment_reason']}" if p.get("sentiment_reason") else ""
                         lines.append(f"- [{p['date'][:10]}] **{p['context']}** | {p['sentiment']}{reason}{hosting_note}  ")
                         lines.append(f"  > {preview}...\n")
@@ -935,22 +910,21 @@ def generate_report(all_authors):
 
     # --- СВОДНАЯ ТАБЛИЦА ---
     lines.append("## Сводная таблица\n")
-    lines.append("| Автор / Канал | Постов | Яндекс | Яндекс — линия | VK | VK — линия | Сбер | Сбер — линия | Ozon | Ozon — линия |")
-    lines.append("|---|---|---|---|---|---|---|---|---|---|")
+    comp_headers = " | ".join(f"{c} | {c} — линия" for c in COMPETITOR_NAMES)
+    header = f"| Автор / Канал | Постов | {PRIMARY_BRAND_NAME} | {PRIMARY_BRAND_NAME} — линия | {comp_headers} |"
+    separator = "|" + "---|" * (4 + len(COMPETITOR_NAMES) * 2)
+    lines.append(header)
+    lines.append(separator)
 
     for author_key, info in sorted_authors:
         yc = len(info["yandex_posts"])
-        yt = trajectory_label(info["yandex_posts"], "Яндекс")
-        vk_posts = info["competitor_posts"].get("VK", [])
-        vk_c = len(vk_posts)
-        vk_t = trajectory_label(vk_posts, "VK")
-        sb_posts = info["competitor_posts"].get("Сбер", [])
-        sb_c = len(sb_posts)
-        sb_t = trajectory_label(sb_posts, "Сбер")
-        oz_posts = info["competitor_posts"].get("Ozon", [])
-        oz_c = len(oz_posts)
-        oz_t = trajectory_label(oz_posts, "Ozon")
-        lines.append(f"| {author_key} | {info['total_posts']} | {yc} | {yt} | {vk_c} | {vk_t} | {sb_c} | {sb_t} | {oz_c} | {oz_t} |")
+        yt = trajectory_label(info["yandex_posts"], PRIMARY_BRAND_NAME)
+        comp_cells = []
+        for cn in COMPETITOR_NAMES:
+            cp = info["competitor_posts"].get(cn, [])
+            comp_cells.append(f"{len(cp)} | {trajectory_label(cp, cn)}")
+        comp_str = " | ".join(comp_cells)
+        lines.append(f"| {author_key} | {info['total_posts']} | {yc} | {yt} | {comp_str} |")
 
     lines.append("")
     return "\n".join(lines)
@@ -960,9 +934,9 @@ def main():
     parser = argparse.ArgumentParser(description="Анализ упоминаний брендов в Telegram-каналах")
     parser.add_argument("--dump-posts", action="store_true", help="Выгрузить посты в reports/posts_dump.txt")
     parser.add_argument(
-        "--dump-yandex",
+        "--dump-brand",
         action="store_true",
-        help="Выгрузить только посты про Яндекс по каждому автору в reports/yandex_by_author/*.txt",
+        help="Выгрузить только посты про основной бренд по каждому автору",
     )
     parser.add_argument(
         "--allow-keyword-fallback",
@@ -978,16 +952,16 @@ def main():
     for ak, info in all_authors.items():
         y = len(info["yandex_posts"])
         c = sum(len(v) for v in info["competitor_posts"].values())
-        print(f"  {ak}: {info['total_posts']} постов, Яндекс={y}, конкуренты={c}")
+        print(f"  {ak}: {info['total_posts']} постов, {PRIMARY_BRAND_NAME}={y}, конкуренты={c}")
 
     if args.dump_posts:
         dump_posts(all_authors)
-        if args.dump_yandex:
-            dump_yandex_by_author(all_authors)
+        if args.dump_brand:
+            dump_brand_by_author(all_authors)
         return
 
-    if args.dump_yandex:
-        dump_yandex_by_author(all_authors)
+    if args.dump_brand:
+        dump_brand_by_author(all_authors)
 
     print("\nГенерация отчёта...")
     report = generate_report(all_authors)

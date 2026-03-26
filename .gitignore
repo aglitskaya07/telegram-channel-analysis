@@ -17,6 +17,9 @@ tg_session.session
 *.session
 .tg_credentials.json
 
+# Конфигурация брендов (содержит реальные названия компаний)
+brands_config.py
+
 # Сгенерированные данные
 exports/
 artifacts/
